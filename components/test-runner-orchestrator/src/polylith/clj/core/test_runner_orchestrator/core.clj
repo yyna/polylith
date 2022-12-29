@@ -10,9 +10,11 @@
    [polylith.clj.core.test-runner-contract.interface.verifiers :as test-runner-verifiers]
    [polylith.clj.core.util.interface.color :as color]
    [polylith.clj.core.util.interface.time :as time-util]
-   [polylith.clj.core.validator.interface :as validator]))
+   [polylith.clj.core.validator.interface :as validator]
+   [polylith.clj.core.change.bricks-to-test :as bricks-to-test]))
 
-(defn resolve-deps [{:keys [name] :as project} settings is-verbose color-mode]
+(defn resolve-deps [{:keys [name]
+                     :as   project} settings is-verbose color-mode]
   (try
     (into #{} (mapcat #(-> % second :paths))
           (deps/resolve-deps project settings is-verbose))
@@ -43,7 +45,8 @@
             false))))
     true))
 
-(defn ->valid-test-runner-fn [{:keys [project color-mode] :as opts}]
+(defn ->valid-test-runner-fn [{:keys [project color-mode]
+                               :as   opts}]
   (fn ->valid-test-runner [ctor-sym]
     (-> ctor-sym
         (test-runner-initializers/->constructor-var)
@@ -71,7 +74,7 @@
       (when-not (execute-fn teardown-fn "teardown" (:name project) class-loader color-mode)
         (when throw?
           (throw (ex-info "Test terminated due to teardown failure"
-                          {:project project
+                          {:project          project
                            :teardown-failed? true})))))))
 
 (defn run-tests-for-project-with-test-runner
@@ -116,43 +119,44 @@
 (defn ->test-opts [workspace
                    settings
                    changes
-                   {:keys [name] :as project}
+                   {:keys [name]
+                    :as   project}
                    is-verbose
                    color-mode]
-  {:workspace workspace
-   :project project
-   :changes changes
+  {:workspace     workspace
+   :project       project
+   :changes       changes
    :test-settings (get-in settings [:projects name :test])
-   :is-verbose is-verbose
-   :color-mode color-mode})
+   :is-verbose    is-verbose
+   :color-mode    color-mode})
 
-(defn run-tests-for-project [{:keys [workspace project test-settings is-verbose color-mode] :as opts}]
-  (let [{:keys [settings]} workspace
-        {:keys [paths]} project
+(defn run-tests-for-project [{:keys [workspace project test-settings is-verbose color-mode]
+                              :as   opts}]
+  (let [{:keys [settings]}                                workspace
+        {:keys [paths]}                                   project
         {:keys [create-test-runner setup-fn teardown-fn]} test-settings
-        test-runners-seeing-test-sources
-        (into []
-              (comp (map (->valid-test-runner-fn opts))
-                    (filter test-runner-contract/test-sources-present?))
-              create-test-runner)]
+        test-runners-seeing-test-sources                  (into []
+                                                                (comp (map (->valid-test-runner-fn opts))
+                                                                      (filter test-runner-contract/test-sources-present?))
+                                                                create-test-runner)]
     (when (seq test-runners-seeing-test-sources)
-      (let [lib-paths (resolve-deps project settings is-verbose color-mode)
-            all-paths (into [] cat [(:src paths) (:test paths) lib-paths])
+      (let [lib-paths          (resolve-deps project settings is-verbose color-mode)
+            all-paths          (into [] cat [(:src paths) (:test paths) lib-paths])
             class-loader-delay (delay (common/create-class-loader all-paths color-mode))]
         (when is-verbose (println (str "# paths:\n" all-paths "\n")))
         (doseq [current-test-runner test-runners-seeing-test-sources]
-          (let [process-ns (when (test-runner-verifiers/valid-external-test-runner? current-test-runner)
-                             (test-runner-contract/external-process-namespace current-test-runner))
-                runner-opts (cond-> {:setup-fn setup-fn
+          (let [process-ns  (when (test-runner-verifiers/valid-external-test-runner? current-test-runner)
+                              (test-runner-contract/external-process-namespace current-test-runner))
+                runner-opts (cond-> {:setup-fn    setup-fn
                                      :teardown-fn teardown-fn
-                                     :all-paths all-paths}
+                                     :all-paths   all-paths}
 
-                                    process-ns
-                                    (assoc :process-ns process-ns)
+                              process-ns
+                              (assoc :process-ns process-ns)
 
-                                    (not process-ns)
-                                    (assoc :class-loader @class-loader-delay
-                                           :eval-in-project (->eval-in-project @class-loader-delay)))]
+                              (not process-ns)
+                              (assoc :class-loader @class-loader-delay
+                                     :eval-in-project (->eval-in-project @class-loader-delay)))]
             (->> {:test-runner current-test-runner
                   :runner-opts (merge opts runner-opts)}
                  (merge opts)
@@ -186,23 +190,27 @@
     [(color/base (str/join ", " base-names) color-mode)]))
 
 (defn print-bricks-to-test [component-names base-names bricks-to-test color-mode]
+  (println "component-names >>" component-names)
+  (println "base-names >>" base-names)
+  (println "bricks-to-test >>" bricks-to-test)
   (when bricks-to-test
     (let [components-to-test (sort (set/intersection component-names (set bricks-to-test)))
-          bases-to-test (sort (set/intersection base-names (set bricks-to-test)))
-          components (components-msg components-to-test color-mode)
-          bases (bases-msg bases-to-test color-mode)
-          bricks (str/join ", " (concat components bases))]
+          bases-to-test      (sort (set/intersection base-names (set bricks-to-test)))
+          components         (components-msg components-to-test color-mode)
+          bases              (bases-msg bases-to-test color-mode)
+          bricks             (str/join ", " (concat components bases))]
       (println (str "Bricks to run tests for: " bricks)))))
 
-(defn run [{:keys [components bases projects changes settings messages] :as workspace} is-verbose color-mode]
+(defn run [{:keys [components bases projects changes settings messages]
+            :as   workspace} is-verbose color-mode]
   (if (validator/has-errors? messages)
     (do (validator/print-messages workspace)
         false)
-    (let [start-time (time-util/current-time)
+    (let [start-time       (time-util/current-time)
           projects-to-test (sort-by :name (filterv #(affected-by-changes? % changes) projects))
-          bricks-to-test (-> workspace :user-input :selected-bricks)
-          component-names (into #{} (map :name) components)
-          base-names (into #{} (map :name) bases)]
+          bricks-to-test   (-> workspace :user-input :selected-bricks)
+          component-names  (into #{} (map :name) components)
+          base-names       (into #{} (map :name) bases)]
       (if (empty? projects-to-test)
         (print-no-tests-to-run-if-only-dev-exists settings projects)
         (do
